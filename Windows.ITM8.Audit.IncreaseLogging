@@ -1,0 +1,98 @@
+name: Windows.ITM8.Audit.IncreaseLogging
+
+description: |
+  A tool for increasing logging visibility.
+  Based on itm8 ARC Logging Recommendations for Windows.
+  Note that the recommendations for DCs are not implemented in this version. It is advised to do it manually. 
+  Level 1 includes:
+  - Increase size of Security log to 4.194.240 KB (4GB)
+  - Enable PowerShell transcription, module logging, script block logging
+  - Enable process creation audit
+  - Set PowerShell logs to 4GB
+
+  Level 2 includes:
+  - Additional audit categories applied via secedit policy template
+
+author: Christian Henriksen @ itm8 | improsec
+type: CLIENT
+precondition: SELECT OS FROM info() WHERE OS = 'windows'
+
+parameters:
+  - name: Level_1
+    type: bool
+    default: Y
+    description: Apply itm8 ARC Logging Level 1 recommendations
+
+  - name: Level_2
+    type: bool
+    default: N
+    description: Apply additional auditpol categories from ITM8 Level 2
+
+  - name: Level_1_and_2
+    type: bool
+    default: N
+    description: Apply both Level 1 and Level 2 logging recommendations
+
+  - name: PSLogs_output
+    type: string
+    default: C:\PSHTranscripts
+    description: Where PowerShell transcripts should be written
+
+sources:
+  - query: |
+      SELECT * FROM chain(
+        level_1_check=if(condition=Level_1 or Level_1_and_2,
+          then={
+            SELECT * FROM chain(
+              module_create_key={SELECT Stderr FROM execve(argv=["powershell", "New-Item", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ModuleLogging", "-Force"])}
+              ,module_set_key={SELECT Stdout, Stderr FROM execve(argv=["powershell", "Set-ItemProperty", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ModuleLogging", "-Name", "EnableModuleLogging", "-Value", "1", "-Force"])}
+              ,module_create_modules_key={SELECT Stdout, Stderr FROM execve(argv=["powershell", "New-Item", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ModuleLogging\\ModuleNames", "-Force"])}
+              ,modules_set_modules_key={SELECT Stdout, Stderr FROM execve(argv=["powershell", "Set-ItemProperty", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ModuleLogging\\ModuleNames", "-Name", "*", "-Value", "*", "-Force"])}
+              ,transcription_create_key={SELECT Stderr FROM execve(argv=["powershell", "New-Item", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\Transcription", "-Force"])}
+              ,transcription_set_key={SELECT Stderr FROM execve(argv=["powershell", "Set-ItemProperty", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\Transcription", "-Name", "EnableTranscripting", "-Value", "1", "-Force"])}
+              ,transcription_set_key_invocation={SELECT Stderr FROM execve(argv=["powershell", "Set-ItemProperty", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\Transcription", "-Name", "EnableInvocationHeader", "-Value", "1", "-Force"])}
+              ,transcription_set_key_outputdir={SELECT Stderr FROM execve(argv=["powershell", "Set-ItemProperty", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\Transcription", "-Name", "OutputDirectory", "-Value", PSLogs_output, "-Force"])}
+              ,scriptblock_create_key={SELECT Stderr FROM execve(argv=["powershell", "New-Item", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging", "-Force"])}
+              ,scriptblock_set_key={SELECT Stderr FROM execve(argv=["powershell", "Set-ItemProperty", "-Path", "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging", "-Name", "EnableScriptBlockLogging", "-Value", "1", "-Force"])}
+              ,process_audit_enable={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set", "/subcategory:'{0CCE922B-69AE-11D9-BED3-505054503030}'", "/success:enable", "/failure:enable"])}
+              ,powershell_eventlog_increase={SELECT Stderr FROM execve(argv=["wevtutil", "sl", "Microsoft-Windows-PowerShell/Operational", "/ms:4294967296"])}
+              ,powershelltwo_eventlog_increase={SELECT Stderr FROM execve(argv=["wevtutil", "sl", "Windows PowerShell", "/ms:4294967296"])}
+              ,security_eventlog_increase={SELECT Stderr FROM execve(argv=["wevtutil", "sl", "Security", "/ms:4294967296"])}
+            )
+          },
+          else={
+            SELECT Stderr FROM execve(argv=["powershell", "-Command", "Write-Output 'Level 1 not selected.'"])
+          }
+        ),
+        level_2_check=if(condition=Level_2 or Level_1_and_2,
+          then={
+            SELECT * FROM chain(
+              credential_validation={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE923F-69AE-11D9-BED3-505054503030}'","/success:enable","/failure:enable"])}
+              ,dpapi_activity={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE922D-69AE-11D9-BED3-505054503030}'","/success:enable","/failure:enable"])}
+              ,other_account_logon_events={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9241-69AE-11D9-BED3-505054503030}'","/success:enable","/failure:enable"])}
+              ,logoff={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9216-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,logon={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9215-69AE-11D9-BED3-505054503030}'","/success:enable","/failure:enable"])}
+              ,app_group_mgmt={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9239-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,sec_group_mgmt={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9237-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,account_lockout={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9217-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,other_logon_logoff={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE921C-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,special_logon={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE921B-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,certificate_services={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9221-69AE-11D9-BED3-505054503030}'","/success:enable","/failure:enable"])}
+              ,file_share={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9224-69AE-11D9-BED3-505054503030}'","/success:enable","/failure:enable"])}
+              ,detailed_file_share={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9244-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,other_object_access={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9227-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,audit_policy_change={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE922F-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,authentication_policy_change={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9230-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,authorization_policy_change={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9231-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,mpssvc_policy_change={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9232-69AE-11D9-BED3-505054503030}","/success:enable"])}
+              ,sensitive_privilege_use={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9228-69AE-11D9-BED3-505054503030}'","/success:enable","/failure:enable"])}
+              ,security_state_change={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9210-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+              ,security_system_extension={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9211-69AE-11D9-BED3-505054503030}'","/success:enable","/failure:enable"])}
+              ,system_integrity={SELECT Stderr FROM execve(argv=["powershell.exe","-Command","auditpol", "/set","/subcategory:'{0CCE9212-69AE-11D9-BED3-505054503030}'","/success:enable"])}
+            )
+          },
+          else={
+            SELECT Stdout, Stderr FROM execve(argv=["powershell", "-Command", "Write-Output 'Level 2 not selected.'"])
+          }
+        )
+      )
