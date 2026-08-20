@@ -1,0 +1,46 @@
+name: Linux.ITM8.Deploy.UAC
+description: |
+  A deployment tool for ITM8 UAC
+author: Christian Henriksen @ itm8 | improsec
+type: CLIENT
+resources:
+  timeout: 1000000
+  max_upload_bytes: 10000000000
+parameters: 
+  - name: LocalCopy
+    description: A flag to specify if UAC should be run with local copy. Note that this automatically ships the output to the public storage container.
+    default: Y
+    type: bool
+  - name: Additional
+    description: This will give the ability to add more options, ex. -lc | --local -f | --force -m | --memory
+tools:
+  - name: ITM8_UAC
+    url: "{BASE_URI}/public/uac-linux.zip"
+    serve_url: "{BASE_URI}/public/uac-linux.zip"
+precondition: SELECT OS From info() where OS = 'linux'
+sources:
+  - query: |
+      -- Get context on target binary
+      LET bin <= SELECT * FROM Artifact.Generic.Utils.FetchBinary(ToolName="ITM8_UAC",IsExecutable=false)
+      LET tmpdir <= tempdir()
+      
+      LET zip_file <= SELECT *
+                        FROM unzip(filename=bin.OSPath,
+                        output_directory=tmpdir)
+                        WHERE OriginalPath =~ "itm8_linux_acquisition.sh"
+      LET zipFolder <= tmpdir+"/output"
+      SELECT * FROM if(condition=LocalCopy,
+        then={
+        SELECT *
+        FROM chain(
+          a={SELECT Stdout, Stderr FROM execve(argv=["chmod","+x", zip_file.NewPath[0]])},
+          b={SELECT Stdout, Stderr FROM execve(argv=["sudo","."+zip_file.NewPath[0],"-lc",Additional])},
+          c={SELECT Stdout, Stderr FROM execve(argv=["zip","-r","/tmp/output.zip", zipFolder])},
+          d={SELECT Stdout, Stderr, upload(file="/tmp/output.zip") FROM glob(globs=tmpdir)},
+          e={SELECT Stdout, Stderr FROM execve(argv=["rm","/tmp/output.zip"])}
+        )},else={
+      SELECT *
+        FROM chain(
+          a={SELECT Stdout, Stderr FROM execve(argv=["chmod","+x", zip_file.NewPath[0]])},
+          b={SELECT Stdout, Stderr FROM execve(argv=["sudo","."+zip_file.NewPath[0],Additional])}
+        )})
