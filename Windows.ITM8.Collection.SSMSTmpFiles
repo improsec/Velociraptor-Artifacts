@@ -1,0 +1,25 @@
+name: Windows.ITM8.Collection.SSMSTmpFiles
+description: |
+  This artifact collects all users' temp ..sql files and optionally uploads them.
+  These files give insight into recently run SQL commands.
+  BLOGPOST LINK: 
+author: Kirke Kjellberg & Christian Henriksen @ itm8 ARC  
+type: CLIENT
+
+precondition: SELECT OS FROM info() WHERE OS = 'windows'
+parameters:
+  - name: upload_files
+    type: bool
+    description: "Set to true to upload the files"
+    default: Y
+
+sources:
+- name: SSMSTempSQLFiles
+  query: |
+    LET files = SELECT * FROM glob(globs=['C:/Users/*/AppData/Local/Temp/*..sql'])
+    LET Content = read_file(filename=OSPath, length=1000)
+    LET SQLTmpFile = if(condition=upload_files, then=upload(file=OSPath))
+    SELECT Btime, OSPath, SQLTmpFile, Content FROM files
+column_types:
+  - name: SQLTmpFile
+    type: upload_preview
