@@ -1,0 +1,54 @@
+name: Windows.ITM8.Audit.Policies
+description: |
+  A tool for auditing what logging policies is enabled on a host.
+  This is a tool that is created based on the itm8 ARC Logging Recommendations for Windows. 
+
+  Snippet of what we recommend for Level 1:
+
+  - Size of security log to be 4.194.240 KB
+
+  - Powershell Logging
+ 
+  - Powershell Log size to 4GB (default 15mb)
+ 
+  - Process creation
+
+  For a higher visbility more from the auditpol should be enabled
+  
+  **Note that if nothing is displayed in the columns for a host, the registry value is not available**
+
+author: Christian Henriksen @ itm8 | improsec
+type: CLIENT
+precondition: SELECT OS From info() where OS = 'windows'
+sources:
+  - query: |
+        // query audit policies
+        LET auditpol_output = SELECT * FROM execve(
+          argv=["auditpol.exe","/get","/category:*","/r"])
+        // check if sysmon is enabled
+        LET sysmon_output = SELECT OSPath[-2] AS ProgramName, Data.value  AS Sysmon_Enabled FROM glob(globs='''HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Channels\"Microsoft-Windows-Sysmon/Operational"\Enabled''',accessor='registry')
+        // check if PowerShell transcription is enabled
+        LET PWSHTRANS_output = SELECT Data.value AS PWSHTRANS_enabled FROM glob(globs='''HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription\EnableTranscripting''',accessor='registry')
+        // check if PowerShell Scriptblock logging is enabled
+        LET PWSHSCRIPTBLOCK_output = SELECT Data.value AS PWSHSCRIPTBLOCK_enabled FROM glob(globs='''HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging\EnableScriptBlockLogging''',accessor='registry')
+        // check if PowerShell module logging is enabled
+        LET PWSHMODULE_output = SELECT Data.value AS PWSHMODULE_enabled FROM glob(globs='''HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging\EnableModuleLogging''',accessor='registry')
+        // check the size of PowerShell log
+        LET PWSHLOGSIZE_output = SELECT Data.value AS PWSHLOGSIZE FROM glob(globs='''HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Channels\"Microsoft-Windows-PowerShell/Operational"\MaxSize''',accessor='registry')
+        // check the size of the Security log
+        LET SECURITYMAXSIZE_output = SELECT Data.value AS SECURITYMAXSIZE FROM glob(globs='''HKEY_LOCAL_MACHINE\SYSTEM\ControlSet001\Services\EventLog\Security\MaxSize''',accessor='registry')
+        
+        SELECT { SELECT * FROM foreach(row=auditpol_output,
+          query={
+              SELECT Subcategory,`Inclusion Setting` FROM parse_csv(filename=Stdout,accessor="data")
+          }
+        )} AS Auditpol,
+        {SELECT Sysmon_Enabled FROM sysmon_output} As Sysmon_Enabled,
+        {SELECT PWSHTRANS_enabled FROM PWSHTRANS_output} AS PowerShell_Transcription_Enabled,
+        {SELECT PWSHSCRIPTBLOCK_enabled FROM PWSHSCRIPTBLOCK_output} AS PowerShell_ScriptBlock_Enabled, 
+        {SELECT PWSHMODULE_enabled FROM PWSHMODULE_output} AS PowerShell_Module_Enable,
+        {SELECT PWSHLOGSIZE FROM PWSHLOGSIZE_output} AS PowerShell_Log_Size,
+        {SELECT SECURITYMAXSIZE FROM SECURITYMAXSIZE_output} AS Security_Log_Size
+        FROM scope()
+
+    
